@@ -1,5 +1,7 @@
 dist: trusty
 language: go
+services:
+  - docker
 go:
   - 1.13.3
 env:
