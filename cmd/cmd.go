@@ -2,276 +2,143 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/julienschmidt/httprouter"
 	"github.com/sirupsen/logrus"
 
-	agent "github.com/adevinta/vulcan-agent"
 	"github.com/adevinta/vulcan-agent/api"
-	"github.com/adevinta/vulcan-agent/check"
+	httpapi "github.com/adevinta/vulcan-agent/api/http"
+	"github.com/adevinta/vulcan-agent/backend"
 	"github.com/adevinta/vulcan-agent/config"
-	"github.com/adevinta/vulcan-agent/persistence"
+	"github.com/adevinta/vulcan-agent/jobrunner"
+	"github.com/adevinta/vulcan-agent/log"
 	"github.com/adevinta/vulcan-agent/queue"
+	"github.com/adevinta/vulcan-agent/queue/sqs"
 	"github.com/adevinta/vulcan-agent/results"
-	"github.com/adevinta/vulcan-agent/scheduler"
-	"github.com/adevinta/vulcan-agent/stream"
-	metrics "github.com/adevinta/vulcan-metrics-client"
+	"github.com/adevinta/vulcan-agent/stateupdater"
+	// "github.com/adevinta/vulcan-agent/stream"
+	// metrics "github.com/adevinta/vulcan-metrics-client"
 )
 
-var version string
+type backendCreator func(log.Logger, config.Config, backend.CheckVars) (backend.Backend, error)
 
-func MainWithExitCode(factory agent.AgentFactory) int {
-	var err error
-
+func MainWithExitCode(bc backendCreator) int {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: vulcan-agent config_file")
+		fmt.Fprint(os.Stderr, "Usage: vulcan-agent config_file")
 		return 1
 	}
-
-	log := logrus.New()
-
 	cfg, err := config.ReadConfig(os.Args[1])
 	if err != nil {
-		log.Errorf("error reading configuration file: %v", err)
+		fmt.Fprintf(os.Stderr, "error reading configuration file: %v", err)
 		return 1
 	}
-
-	if cfg.Agent.LogFile != "" {
-		var logFile *os.File
-		logFile, err = os.OpenFile(cfg.Agent.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0600)
-		if err != nil {
-			log.Errorf("error opening log file: %v", err)
-			return 1
-		}
-		log.Out = logFile
-		log.Formatter = &logrus.TextFormatter{
-			FullTimestamp:   true,
-			DisableColors:   true,
-			TimestampFormat: time.RFC3339Nano,
-		}
-	} else {
-		log.Out = os.Stdout
-		log.Formatter = &logrus.TextFormatter{
-			FullTimestamp:   true,
-			TimestampFormat: time.RFC3339Nano,
-		}
-	}
-
-	log.Level = parseLogLevel(cfg.Agent.LogLevel)
-
-	hostname, err := os.Hostname()
+	l, err := log.New(cfg.Agent)
 	if err != nil {
-		log.Errorf("error retrieving hostname: %v", err)
+		fmt.Fprintf(os.Stderr, "error reading creating log: %v", err)
 		return 1
 	}
-
-	// Add hostname to all log entries.
-	l := logrus.NewEntry(log).WithFields(logrus.Fields{"hostname": hostname})
-
-	l.Info("initializing agent")
-
-	persisterWithUpdateCheckStatus, err := persistence.New(
-		cfg.Persistence.Endpoint,
-		time.Duration(cfg.Persistence.Timeout)*time.Second,
-		l,
-	)
+	b, err := bc(l, cfg, cfg.Check.Vars)
 	if err != nil {
-		log.WithError(err).Error("error connecting to persistence")
+		l.Errorf("error creating the backend to run the checks %v", err)
 		return 1
 	}
 
-	persisterWithUpdateCheckStatus = persistence.WithBackoff(persisterWithUpdateCheckStatus, cfg.Persistence.Retries, l)
-	// We are casting to PersistenceService in order to have a reference to an interface
-	// that doesn't have the ability to update the check status.
-	// We ensure the components that don't need to update the status are not able to by
-	// injecting this reference to them.
-
-	persister := persistence.PersisterService(persisterWithUpdateCheckStatus)
-	uploader, err := results.New(
-		cfg.Uploader.Endpoint,
-		time.Duration(cfg.Uploader.Timeout)*time.Second,
-		l,
-	)
+	r, err := results.New(cfg.Uploader.Endpoint, time.Duration(cfg.Uploader.Timeout*int(time.Second)))
 	if err != nil {
-		log.WithError(err).Error("error creating uploader to results service")
+		l.Errorf("error creating results client %+v", err)
 		return 1
 	}
 
-	agentID, jobqueueARN, err := persister.CreateAgent(version, cfg.Agent.JobqueueID)
+	qw, err := sqs.NewWriter(cfg.SQSWriter.ARN, cfg.SQSWriter.Endpoint, l)
 	if err != nil {
-		log.WithError(err).Error("error creating agent")
+		l.Errorf("error creating sqs writer %+v", err)
 		return 1
 	}
 
-	// Before returning, set the agent as down.
-	defer func() {
-		err = persister.UpdateAgentStatus(agentID, agent.StatusDown)
-		if err != nil {
-			l.WithError(err).Error("error updating agent status")
-		}
-	}()
+	stateUpdater := stateupdater.New(qw)
+	updater := struct {
+		*stateupdater.Updater
+		*results.Uploader
+	}{stateUpdater, r}
 
-	// Add agent ID to all log entries.
-	l = l.WithFields(logrus.Fields{"agent_id": agentID})
-	memStorage := check.NewMemoryStorage()
-	storage := check.NewCombinedStorage(l, &memStorage, persisterWithUpdateCheckStatus)
-
-	// Context used to disconnect the agent.
-	agentCtx, agentCancel := context.WithCancel(context.Background())
-
-	agt, err := factory(agentCtx, agentCancel, agentID, storage, l, cfg)
-	if err != nil {
-		l.WithError(err).Error("error initializing agent")
-		return 1
+	runnerCfg := jobrunner.RunnerConfig{
+		MaxTokens:      cfg.Agent.ConcurrentJobs,
+		DefaultTimeout: cfg.Agent.Timeout,
 	}
-
-	l.Info("connecting agent to queue")
-
-	// NOTE: Capacity needs to be buffered to not block.
-	capacityChan := make(chan int, 10)
-	pauseChan := make(chan bool)
-
-	jobs := scheduler.NewJobScheduler(cfg.Scheduler.ConcurrentJobs, capacityChan, pauseChan)
-
-	sqs, err := queue.NewSQSQueueManager(jobqueueARN, cfg.SQS, capacityChan, pauseChan)
-	if err != nil {
-		l.WithError(err).Error("error connecting agent to SQS queue")
-		return 1
+	jrunner := jobrunner.New(l, b, updater, runnerCfg)
+	qr, err := sqs.NewReader(l, cfg.SQSReader, jrunner)
+	stats := struct {
+		*jobrunner.Runner
+		*sqs.Reader
+	}{
+		jrunner,
+		qr,
 	}
-
-	// Parse DataDog config.
-	// If metrics are enabled, export config as env variables
-	// for metrics client constructor.
-	if cfg.DataDog.Enabled {
-		os.Setenv("DOGSTATSD_ENABLED", "true")
-		statsdAddr := strings.Split(cfg.DataDog.Statsd, ":")
-		if len(statsdAddr) == 2 {
-			os.Setenv("DOGSTATSD_HOST", statsdAddr[0])
-			os.Setenv("DOGSTATSD_PORT", statsdAddr[1])
-		}
+	api := api.New(l, updater, stats)
+	router := httprouter.New()
+	httpapi.NewREST(l, api, router)
+	srv := http.Server{
+		Addr:    cfg.API.Port,
+		Handler: router,
 	}
-	metricsClient, err := metrics.NewClient()
-	if err != nil {
-		l.WithError(err).Error("error creating metrics client")
-		return 1
-	}
-
-	schedulerParams := scheduler.Params{
-		Jobs:          &jobs,
-		Agent:         agt,
-		Storage:       storage,
-		QueueManager:  sqs,
-		Persister:     persister,
-		MetricsClient: metricsClient,
-		Config: scheduler.Config{
-			MonitorInterval:   cfg.Scheduler.MonitorInterval,
-			HeartbeatInterval: cfg.Scheduler.HeartbeatInterval,
-		},
-	}
-
-	scheduler := scheduler.New(agentCtx, agentCancel, schedulerParams, l)
-
-	// The API will listen always in the address ":port".
-	api := api.New(agentCtx, agt, storage, persister, uploader, scheduler, cfg.API.Port, l)
-
+	var httpDone = make(chan error)
 	go func() {
-		apiErr := api.ListenAndServe()
-		if apiErr != nil {
-			l.WithError(apiErr).Error("error exposing agent API")
-			agentCancel()
-		}
+		err := srv.ListenAndServe()
+		httpDone <- err
+		close(httpDone)
 	}()
 
-	// Map stream actions to function calls.
-	actions := map[string]func(agent.Agent, string){
-		"abort": func(a agent.Agent, scanID string) {
-			abortErr := a.AbortChecks(scanID)
-			if err != nil {
-				l.WithField("scan_id", scanID).WithError(abortErr).Error("error aborting checks")
-				return
-			}
-		},
-		"pause": func(a agent.Agent, _ string) {
-			// Stop scheduling new jobs.
-			jobs.Pause()
-			a.SetStatus(agent.StatusPausing)
-			// Wait for scheduled jobs to finish.
-			jobs.Wait()
-			a.SetStatus(agent.StatusPaused)
-			pauseErr := persister.UpdateAgentStatus(a.ID(), agent.StatusPaused)
-			if pauseErr != nil {
-				l.WithError(pauseErr).Error("error updating agent status")
-			}
-		},
-		"resume": func(a agent.Agent, _ string) {
-			jobs.Resume()
-			a.SetStatus(agent.StatusRunning)
-			resumeErr := persister.UpdateAgentStatus(a.ID(), agent.StatusRunning)
-			if resumeErr != nil {
-				l.WithError(resumeErr).Error("error updating agent status")
-			}
-		},
-		"disconnect": func(a agent.Agent, _ string) {
-			l.Warn("disconnecting agent")
-			agentCancel()
-		},
-		"ping": func(a agent.Agent, _ string) {
-			l.Debug("ping received")
-		},
+	ctxqr, cancelqr := context.WithCancel(context.Background())
+	qrdone := qr.StartReading(ctxqr)
+
+	maxTimeNoMsg := time.Duration(cfg.Agent.MaxNoMsgsInterval) * time.Second
+	qStopper := queue.ReaderStopper{
+		R:       qr,
+		MaxTime: maxTimeNoMsg,
 	}
 
-	l.Info("connecting agent to stream")
-	streamTimeout := time.Duration(cfg.Stream.Timeout) * time.Second
-	// Set a default interval for the stream retries. A 0 seconds interval is
-	// not allowed.
-	if cfg.Stream.RetryInterval == 0 {
-		cfg.Stream.RetryInterval = 5
+	stopperDone := qStopper.Track(ctxqr)
+	l.Infof("agent running on address %s", srv.Addr)
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case <-sig:
+		// Signal the sqs queue reader to stop reading messages from the queue.
+		cancelqr()
+	case err = <-stopperDone:
+		l.Infof("shutting down agent because more than %+v seconds elapsed without messages read", maxTimeNoMsg.Seconds())
+		cancelqr()
 	}
-	sInterval := time.Duration(cfg.Stream.RetryInterval) * time.Second
-	strm, err := stream.New(
-		agentCtx, agentCancel, agt, storage, metricsClient,
-		cfg.Stream.Endpoint, streamTimeout, l,
-		cfg.Stream.Retries,
-		sInterval,
-	)
+
+	// Wait fot the queue stopper to finish.
+	err = <-stopperDone
+	if err != nil && !errors.Is(err, context.Canceled) {
+		l.Errorf("error stopping the reader tracker %+v", err)
+	}
+	// Wait for all the pending jobs to finish.
+	err = <-qrdone
+	if err != nil && !errors.Is(err, context.Canceled) {
+		l.Errorf("error stopping agent %+v", err)
+	}
+	// Stop listening for api calls.
+	err = srv.Shutdown(context.Background())
 	if err != nil {
-		l.WithError(err).Error("error connecting agent to stream")
+		l.Errorf("error stoping http server: %+v", err)
 		return 1
 	}
-
-	if err := persister.UpdateAgentStatus(agentID, agent.StatusRegistering); err != nil {
-		l.WithError(err).Error("error updating agent status")
+	err = <-httpDone
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		l.Errorf("http server stopped with error: %+v", err)
 		return 1
 	}
-
-	if err := strm.HandleRegister(); err != nil {
-		l.WithError(err).Error("error registering agent")
-		return 1
-	}
-
-	if err := persister.UpdateAgentStatus(agentID, agent.StatusRegistered); err != nil {
-		l.WithError(err).Error("error updating agent status")
-		return 1
-	}
-
-	agt.SetStatus(agent.StatusRegistered)
-
-	l.Info("agent registered")
-
-	// Start handling stream messages.
-	go func() {
-		err = strm.HandleMessages(actions)
-		if err != nil {
-			l.WithError(err).Error("error handling stream messages")
-		}
-	}()
-
-	// Start processing messages from the queue.
-	scheduler.Run()
-
 	return 0
 }
 
