@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	report "github.com/adevinta/vulcan-report"
+	"github.com/sirupsen/logrus"
 )
 
 func buildMockReportServer() (*httptest.Server, *[]ReportData, *[]RawData) {
@@ -51,7 +51,6 @@ func buildMockReportServer() (*httptest.Server, *[]ReportData, *[]RawData) {
 func TestUploader_UpdateCheckRaw(t *testing.T) {
 	type args struct {
 		checkID       string
-		scanID        string
 		scanStartTime time.Time
 		raw           []byte
 	}
@@ -65,7 +64,6 @@ func TestUploader_UpdateCheckRaw(t *testing.T) {
 			name: "HappyPath",
 			args: args{
 				checkID: "id1",
-				scanID:  "scan1",
 				raw:     []byte("payload"),
 			},
 			want: "ref/id1",
@@ -79,7 +77,7 @@ func TestUploader_UpdateCheckRaw(t *testing.T) {
 				log:      logrus.New().WithField("test", tt.name),
 				timeout:  time.Duration(time.Second),
 			}
-			got, err := u.UpdateCheckRaw(tt.args.checkID, tt.args.scanID, tt.args.scanStartTime, tt.args.raw)
+			got, err := u.UpdateCheckRaw(tt.args.checkID, tt.args.scanStartTime, tt.args.raw)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Uploader.UpdateCheckRaw() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -94,7 +92,6 @@ func TestUploader_UpdateCheckRaw(t *testing.T) {
 func TestUploader_UpdateCheckReport(t *testing.T) {
 	type args struct {
 		checkID       string
-		scanID        string
 		scanStartTime time.Time
 		report        report.Report
 	}
@@ -108,7 +105,6 @@ func TestUploader_UpdateCheckReport(t *testing.T) {
 			name: "HappyPath",
 			args: args{
 				checkID: "id1",
-				scanID:  "scan1",
 				report:  report.Report{},
 			},
 			want: "ref/id1",
@@ -122,7 +118,7 @@ func TestUploader_UpdateCheckReport(t *testing.T) {
 				log:      logrus.New().WithField("test", tt.name),
 				timeout:  time.Duration(time.Second),
 			}
-			got, err := u.UpdateCheckReport(tt.args.checkID, tt.args.scanID, tt.args.scanStartTime, tt.args.report)
+			got, err := u.UpdateCheckReport(tt.args.checkID, tt.args.scanStartTime, tt.args.report)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Uploader.UpdateCheckRaw() error = %v, wantErr %v", err, tt.wantErr)
 				return

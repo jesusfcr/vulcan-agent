@@ -4,14 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"path"
 	"time"
 
+	"github.com/adevinta/vulcan-agent/log"
 	report "github.com/adevinta/vulcan-report"
-
-	"github.com/sirupsen/logrus"
 )
 
 //ReportData represents the payload for report upload requests
@@ -35,29 +35,20 @@ type RawData struct {
 type Uploader struct {
 	endpoint string
 	timeout  time.Duration
-	log      *logrus.Entry
+	log      log.Logger
 }
 
 //New returns a new Uploader object pointing to the given endpoint
-func New(endpoint string, timeout time.Duration, log *logrus.Entry) (Uploader, error) {
-	return Uploader{
+func New(endpoint string, timeout time.Duration) (*Uploader, error) {
+	return &Uploader{
 		endpoint: endpoint,
 		timeout:  timeout,
-		log:      log,
 	}, nil
 }
 
-//UpdateCheckReport ...
-func (u *Uploader) UpdateCheckReport(checkID, scanID string, scanStartTime time.Time, report report.Report) (string, error) {
-	action := "uploading check report"
+// UpdateCheckReport ...
+func (u *Uploader) UpdateCheckReport(checkID string, scanStartTime time.Time, report report.Report) (string, error) {
 	path := path.Join("report")
-
-	u.log.WithFields(logrus.Fields{
-		"check_id": checkID,
-	}).Debug(action)
-
-	log := u.log.WithFields(logrus.Fields{"action": action})
-
 	reportJSON, err := json.Marshal(&report)
 	if err != nil {
 		return "", err
@@ -65,7 +56,7 @@ func (u *Uploader) UpdateCheckReport(checkID, scanID string, scanStartTime time.
 
 	reportData := ReportData{
 		CheckID:       checkID,
-		ScanID:        scanID,
+		ScanID:        checkID,
 		ScanStartTime: scanStartTime,
 		Report:        string(reportJSON),
 	}
@@ -75,24 +66,16 @@ func (u *Uploader) UpdateCheckReport(checkID, scanID string, scanStartTime time.
 		return "", err
 	}
 
-	return u.jsonRequest(path, reportDataBytes, log)
+	return u.jsonRequest(path, reportDataBytes)
 }
 
 //UpdateCheckRaw ...
-func (u *Uploader) UpdateCheckRaw(checkID, scanID string, scanStartTime time.Time, raw []byte) (string, error) {
-	action := "uploading check raw"
+func (u *Uploader) UpdateCheckRaw(checkID string, scanStartTime time.Time, raw []byte) (string, error) {
 	path := path.Join("raw")
-
-	u.log.WithFields(logrus.Fields{
-		"check_id": checkID,
-		"size":     len(raw),
-	}).Debug(action)
-
-	log := u.log.WithFields(logrus.Fields{"action": action})
-
+	// We are not going to process scan id's at he agent level.
 	rawData := RawData{
 		CheckID:       checkID,
-		ScanID:        scanID,
+		ScanID:        checkID,
 		ScanStartTime: scanStartTime,
 		Raw:           raw,
 	}
@@ -102,11 +85,10 @@ func (u *Uploader) UpdateCheckRaw(checkID, scanID string, scanStartTime time.Tim
 		return "", err
 	}
 
-	return u.jsonRequest(path, rawDataBytes, log)
+	return u.jsonRequest(path, rawDataBytes)
 }
 
-// TODO: Implement retrying here.
-func (u *Uploader) jsonRequest(route string, reqBody []byte, log *logrus.Entry) (string, error) {
+func (u *Uploader) jsonRequest(route string, reqBody []byte) (string, error) {
 	var err error
 
 	url, err := url.Parse(u.endpoint)
@@ -121,11 +103,6 @@ func (u *Uploader) jsonRequest(route string, reqBody []byte, log *logrus.Entry) 
 	}
 	req.Header.Add("Content-Type", "application/json; charset=utf-8")
 
-	log.WithFields(logrus.Fields{
-		"url":  url.String(),
-		"body": string(reqBody),
-	}).Debug("performing request to results service")
-
 	c := http.Client{Timeout: u.timeout}
 
 	res, err := c.Do(req)
@@ -134,10 +111,9 @@ func (u *Uploader) jsonRequest(route string, reqBody []byte, log *logrus.Entry) 
 	}
 
 	location, exists := res.Header["Location"]
-	if exists && len(location) > 0 {
-		log.WithFields(logrus.Fields{
-			"Location Header": location[0],
-		}).Debug("received response from results service")
+	if !exists || len(location) <= 0 {
+		body := u.tryReadBody(res)
+		return "", fmt.Errorf("invalid response uploading content to results,status: %s, response body: %s", res.Status, body)
 	}
 
 	if res.StatusCode == http.StatusCreated && len(location) > 0 {
@@ -145,4 +121,16 @@ func (u *Uploader) jsonRequest(route string, reqBody []byte, log *logrus.Entry) 
 	}
 
 	return "", fmt.Errorf("request returned %v status", res.Status)
+}
+
+func (u *Uploader) tryReadBody(res *http.Response) string {
+	if res.ContentLength == 0 {
+		return ""
+	}
+	content, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		u.log.Errorf("error reading body from results service %+v", err)
+		return ""
+	}
+	return string(content)
 }
