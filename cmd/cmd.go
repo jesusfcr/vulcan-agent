@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/julienschmidt/httprouter"
-	"github.com/sirupsen/logrus"
 
 	"github.com/adevinta/vulcan-agent/api"
 	httpapi "github.com/adevinta/vulcan-agent/api/http"
@@ -27,6 +26,10 @@ import (
 
 type backendCreator func(log.Logger, config.Config, backend.CheckVars) (backend.Backend, error)
 
+// MainWithExitCode executes the agent with the backend created by calling
+// passed backend creator. When function finishes it returns an exit code of 0
+// if the agent terminated gracefully, either by receiving a TERM signal or
+// because it passed more time than configured without reading a message.
 func MainWithExitCode(bc backendCreator) int {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, "Usage: vulcan-agent config_file")
@@ -138,23 +141,4 @@ func MainWithExitCode(bc backendCreator) int {
 		return 1
 	}
 	return 0
-}
-
-func parseLogLevel(logLevel string) logrus.Level {
-	switch logLevel {
-	case "panic":
-		return logrus.PanicLevel
-	case "fatal":
-		return logrus.FatalLevel
-	case "error":
-		return logrus.ErrorLevel
-	case "warn":
-		return logrus.WarnLevel
-	case "info":
-		return logrus.InfoLevel
-	case "debug":
-		return logrus.DebugLevel
-	default:
-		return logrus.InfoLevel
-	}
 }
