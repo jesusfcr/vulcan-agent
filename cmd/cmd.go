@@ -23,8 +23,6 @@ import (
 	"github.com/adevinta/vulcan-agent/queue/sqs"
 	"github.com/adevinta/vulcan-agent/results"
 	"github.com/adevinta/vulcan-agent/stateupdater"
-	// "github.com/adevinta/vulcan-agent/stream"
-	// metrics "github.com/adevinta/vulcan-metrics-client"
 )
 
 type backendCreator func(log.Logger, config.Config, backend.CheckVars) (backend.Backend, error)
