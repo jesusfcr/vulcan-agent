@@ -46,7 +46,8 @@ func New(endpoint string, timeout time.Duration) (*Uploader, error) {
 	}, nil
 }
 
-// UpdateCheckReport ...
+// UpdateCheckReport stores the report of a check in the results service and
+// returns the link that can be used to retreive that report.
 func (u *Uploader) UpdateCheckReport(checkID string, scanStartTime time.Time, report report.Report) (string, error) {
 	path := path.Join("report")
 	reportJSON, err := json.Marshal(&report)
@@ -69,7 +70,8 @@ func (u *Uploader) UpdateCheckReport(checkID string, scanStartTime time.Time, re
 	return u.jsonRequest(path, reportDataBytes)
 }
 
-//UpdateCheckRaw ...
+// UpdateCheckRaw stores the log of the execution of a check in results service
+// an returns a link that can be used to retreive the logs.
 func (u *Uploader) UpdateCheckRaw(checkID string, scanStartTime time.Time, raw []byte) (string, error) {
 	path := path.Join("raw")
 	// We are not going to process scan id's at he agent level.

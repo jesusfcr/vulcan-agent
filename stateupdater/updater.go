@@ -28,18 +28,24 @@ type CheckState struct {
 	Progress *float32 `json:"progress,omitempty"`
 }
 
+// QueueWriter defines the queue services used by and
+// updater to send the status updates.
 type QueueWriter interface {
 	Write(body string) error
 }
 
+// Updater takes a CheckState an send its to a queue using the defined queue
+// writer.
 type Updater struct {
 	qw QueueWriter
 }
 
+// New creates a new updater using the provided queue writer.
 func New(qw QueueWriter) *Updater {
 	return &Updater{qw}
 }
 
+// UpdateState updates the state of tha check into the underlaying queue.
 func (u *Updater) UpdateState(s CheckState) error {
 	body, err := json.Marshal(s)
 	if err != nil {

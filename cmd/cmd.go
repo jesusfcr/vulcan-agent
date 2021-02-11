@@ -24,13 +24,16 @@ import (
 	"github.com/adevinta/vulcan-agent/stateupdater"
 )
 
-type backendCreator func(log.Logger, config.Config, backend.CheckVars) (backend.Backend, error)
+// BackendCreator defines the shape of the function that will be called by the
+// function MainWithExitCode in order to create the backend that will run the
+// checks.
+type BackendCreator func(log.Logger, config.Config, backend.CheckVars) (backend.Backend, error)
 
-// MainWithExitCode executes the agent with the backend created by calling
-// passed backend creator. When function finishes it returns an exit code of 0
-// if the agent terminated gracefully, either by receiving a TERM signal or
+// MainWithExitCode executes the agent with the backend created by calling the
+// passed BackendCreator. When the function finishes it returns an exit code of
+// 0 if the agent terminated gracefully, either by receiving a TERM signal or
 // because it passed more time than configured without reading a message.
-func MainWithExitCode(bc backendCreator) int {
+func MainWithExitCode(bc BackendCreator) int {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, "Usage: vulcan-agent config_file")
 		return 1
