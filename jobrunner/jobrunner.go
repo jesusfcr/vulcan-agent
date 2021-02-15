@@ -217,7 +217,7 @@ func (cr *Runner) runJob(msg string, t interface{}, processed chan bool) {
 	}
 	logsLink, err = cr.CheckUpdater.UpdateCheckRaw(j.CheckID, j.StartTime, res.Output)
 	if err != nil {
-		err = fmt.Errorf("error storing the logs of the check %w", err)
+		err = fmt.Errorf("error storing the logs of the check: %s, error %w", j.CheckID, err)
 		cr.finishJob(j.CheckID, processed, false, err)
 		return
 	}
@@ -227,7 +227,7 @@ func (cr *Runner) runJob(msg string, t interface{}, processed chan bool) {
 		Raw: &logsLink,
 	})
 	if err != nil {
-		err = fmt.Errorf("error updating the link to the logs of the check %w", err)
+		err = fmt.Errorf("error updating the link to the logs of the check: %s, error: %w", j.CheckID, err)
 		cr.finishJob(j.CheckID, processed, false, err)
 		return
 	}
@@ -251,7 +251,7 @@ func (cr *Runner) runJob(msg string, t interface{}, processed chan bool) {
 		Status: &status,
 	})
 	if err != nil {
-		err = fmt.Errorf("error updating the link to the logs of the check %w", err)
+		err = fmt.Errorf("error updating the link to the logs of the check: %s, error: %w", j.CheckID, err)
 	}
 	cr.finishJob(j.CheckID, processed, err == nil, err)
 }
