@@ -270,8 +270,8 @@ func (cr *Runner) finishJob(checkID string, processed chan<- bool, delete bool, 
 	default:
 		cr.Logger.Errorf("error, unexpected lock when writting to the tokens channel")
 	}
-	// Signal the caller that the job related to a message is finalized.
-	// It also states if the message related to the job must be deleted or not.
+	// Signal the caller that the job related to a message is finalized. It also
+	// states if the message related to the job must be deleted or not.
 	processed <- delete
 	close(processed)
 }
