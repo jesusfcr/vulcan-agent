@@ -43,14 +43,25 @@ type ReaderStopper struct {
 	MaxTime time.Duration
 }
 
-// Track reads the LastMessageReceived in the Reader stored in the receiver and
-// if it exceeds the period duration, a call to the passed in cancel function is
-// done and the Track goroutine ends by calling the returned channel. The track
-// goroutine also ends if the passed in context is canceled.
+// Track continuously reads the LastMessageReceived from the Reader stored in
+// the receiver. If the that time exceeds the period defined in
+// ReaderStopperPollPeriod the channel returned by the function will contain the
+// a nil value. The function will also stop tracking the last message received
+// if if the passed in context is canceled. In that case the returned channel
+// will contain the value returned by ctx.Err().
 func (rs ReaderStopper) Track(ctx context.Context) <-chan error {
+	var done = make(chan error, 1)
+	// A value of 0 means do not track the LastMessageReceived time at all.
+	if rs.MaxTime == time.Duration(0) {
+		go func() {
+			<-ctx.Done()
+			done <- ctx.Err()
+			close(done)
+		}()
+		return done
+	}
 	pollTime := time.Duration(ReaderStopperPollPeriod) * time.Second
 	pollTimer := time.NewTimer(pollTime)
-	var done = make(chan error, 1)
 	go func() {
 		var err error
 		defer func() {
