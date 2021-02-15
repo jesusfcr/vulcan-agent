@@ -1,2 +1,2 @@
-FROM ubuntu
+FROM alpine
 CMD trap 'echo "ok"' TERM ; while true; do :; done
