@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/adevinta/vulcan-agent/config"
-	"github.com/adevinta/vulcan-agent/log"
 	"github.com/gorilla/websocket"
+
+	"github.com/adevinta/vulcan-agent/log"
 )
 
 var (
@@ -20,6 +20,12 @@ var (
 type readMessageResult struct {
 	Error   error
 	Message Message
+}
+
+// Retryer represents the functions used by the Stream for retrying when
+// connecting to the stream.
+type Retryer interface {
+	WithRetries(op string, exec func() error) error
 }
 
 // Message describes a stream message
@@ -47,15 +53,12 @@ type Stream struct {
 
 // New creates a new stream that will use the given processor to process the messages
 // received by the Stream.
-func New(l log.Logger, processor AbortProcessor, cfg config.StreamConfig) *Stream {
-	retries := cfg.Retries
-	interval := time.Duration(cfg.RetryInterval) * time.Second
-	dialer := NewWSDialerWithRetries(websocket.DefaultDialer, l, retries, interval)
+func New(l log.Logger, processor AbortProcessor, retryer Retryer, endpoint string) *Stream {
+	dialer := NewWSDialerWithRetries(websocket.DefaultDialer, l, retryer)
 	return &Stream{
-		p:        processor,
-		l:        l,
-		dialer:   dialer,
-		endpoint: cfg.Endpoint,
+		p:      processor,
+		l:      l,
+		dialer: dialer,
 	}
 }
 

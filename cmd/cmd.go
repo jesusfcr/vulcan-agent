@@ -100,7 +100,7 @@ func MainWithExitCode(bc BackendCreator) int {
 
 	jrunner := jobrunner.New(l, b, updater, abortedChecks, runnerCfg)
 
-	stream := stream.New(l, jrunner, cfg.Stream)
+	stream := stream.New(l, jrunner, re, endpoint)
 	sCtx, cancelStream := context.WithCancel(context.Background())
 	streamDone, err := stream.ListenAndProcess(sCtx)
 	if err != nil {

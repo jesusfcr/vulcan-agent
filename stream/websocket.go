@@ -3,7 +3,6 @@ package stream
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/lestrrat-go/backoff"
@@ -15,18 +14,13 @@ import (
 // when initiating a connection to a websocket.
 type WSDialerWithRetries struct {
 	*websocket.Dialer
-	p backoff.Policy
-	l log.Logger
+	retryer Retryer
+	l       log.Logger
 }
 
 // NewWSDialerWithRetries creates a WSDialer with the given retries parameters.
-func NewWSDialerWithRetries(dialer *websocket.Dialer, l log.Logger, retries int, interval time.Duration) *WSDialerWithRetries {
-	p := backoff.NewExponential(
-		backoff.WithInterval(interval),
-		backoff.WithJitterFactor(0.05),
-		backoff.WithMaxRetries(retries),
-	)
-	return &WSDialerWithRetries{dialer, p, l}
+func NewWSDialerWithRetries(dialer *websocket.Dialer, l log.Logger, r Retryer) *WSDialerWithRetries {
+	return &WSDialerWithRetries{dialer, r, l}
 }
 
 // Dial wraps the dial function of the websocket dialer adding retries
@@ -36,7 +30,7 @@ func (ws *WSDialerWithRetries) Dial(ctx context.Context, urlStr string, requestH
 		conn *websocket.Conn
 		resp *http.Response
 	)
-	err := withBackoff(ws.p, ws.l, func() error {
+	err := ws.retryer.WithRetries("WSDialer.Dial", func() error {
 		var err error
 		conn, resp, err = websocket.DefaultDialer.DialContext(ctx, urlStr, requestHeader)
 		if err != nil {
