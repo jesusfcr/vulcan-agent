@@ -2,12 +2,11 @@
 Copyright 2019 Adevinta
 */
 
-package cmd
+package agent
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -41,22 +40,7 @@ type BackendCreator func(log.Logger, config.Config, backend.CheckVars) (backend.
 // passed BackendCreator. When the function finishes it returns an exit code of
 // 0 if the agent terminated gracefully, either by receiving a TERM signal or
 // because it passed more time than configured without reading a message.
-func MainWithExitCode(bc BackendCreator) int {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, "Usage: vulcan-agent config_file")
-		return 1
-	}
-	cfg, err := config.ReadConfig(os.Args[1])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading configuration file: %v", err)
-		return 1
-	}
-	l, err := log.New(cfg.Agent)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error reading creating log: %v", err)
-		return 1
-	}
-
+func MainWithExitCode(cfg config.Config, bc BackendCreator, l log.Logger) int {
 	// Build the backend.
 	b, err := bc(l, cfg, cfg.Check.Vars)
 	if err != nil {

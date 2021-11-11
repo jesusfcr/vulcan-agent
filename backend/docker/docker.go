@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"time"
 
 	"github.com/adevinta/dockerutils"
@@ -22,9 +23,11 @@ import (
 	"github.com/adevinta/vulcan-agent/backend"
 	"github.com/adevinta/vulcan-agent/config"
 	"github.com/adevinta/vulcan-agent/log"
+	"github.com/adevinta/vulcan-agent/retryer"
 )
 
 const abortTimeout = 5 * time.Second
+const defaultDockerIfaceName = "docker0"
 
 // Client defines the shape of the docker client component needed by the docker
 // backend in order to be able to run checks.
@@ -52,6 +55,62 @@ type Docker struct {
 	log       log.Logger
 	cli       Client //DockerClient
 	retryer   Retryer
+}
+
+func BuildBackend(l log.Logger, cfg config.Config, vars backend.CheckVars) (backend.Backend, error) {
+	var (
+		addr string
+		err  error
+	)
+	if cfg.API.Host != "" {
+		addr = cfg.API.Host + cfg.API.Port
+	} else {
+		addr, err = getAgentAddr(cfg.API.Port, cfg.API.IName)
+	}
+	if err != nil {
+		return nil, err
+	}
+	interval := cfg.Runtime.Docker.Registry.BackoffInterval
+	retries := cfg.Runtime.Docker.Registry.BackoffMaxRetries
+	re := retryer.NewRetryer(retries, interval, l)
+
+	return New(l, cfg.Runtime.Docker.Registry, re, addr, vars)
+}
+
+// getAgentAddr returns the current address of the agent API from the Docker network.
+// It will also return any errors encountered while doing so.
+func getAgentAddr(port, ifaceName string) (string, error) {
+	connAddr, err := net.ResolveTCPAddr("tcp", port)
+	if err != nil {
+		return "", err
+	}
+	if ifaceName == "" {
+		ifaceName = defaultDockerIfaceName
+	}
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return "", err
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", err
+	}
+
+	for _, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			return "", err
+		}
+
+		// Check if it is IPv4.
+		if ip.To4() != nil {
+			connAddr.IP = ip
+			return connAddr.String(), nil
+		}
+	}
+
+	return "", errors.New("failed to determine Docker agent IP address")
 }
 
 // New created a new Docker backend using the given config, agent api addres and
