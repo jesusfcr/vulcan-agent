@@ -252,7 +252,12 @@ func (cr *Runner) runJob(m queue.Message, t interface{}, processed chan bool) {
 		cr.finishJob(j.CheckID, processed, true, err)
 		return
 	}
-	ctName, ctVersion := getChecktypeInfo(j.Image)
+	ctName, ctVersion, err := getChecktypeInfo(j.Image)
+	if err != nil {
+		cr.cAborter.Remove(j.CheckID)
+		cr.finishJob(j.CheckID, processed, false, err)
+		return
+	}
 	runParams := backend.RunParams{
 		CheckID:          j.CheckID,
 		Target:           j.Target,
@@ -377,10 +382,14 @@ func (cr *Runner) ChecksRunning() int {
 }
 
 // getChecktypeInfo extracts checktype data from a Docker image URI.
-func getChecktypeInfo(imageURI string) (checktypeName string, checktypeVersion string) {
+func getChecktypeInfo(imageURI string) (checktypeName string, checktypeVersion string, err error) {
 	// https://github.com/docker/distribution/blob/master/reference/reference.go#L1-L24
 	re := regexp.MustCompile(`(?P<checktype_name>[a-z0-9]+(?:[-_.][a-z0-9]+)*):(?P<checktype_version>[\w][\w.-]{0,127})`)
 	matches := re.FindStringSubmatch(imageURI)
+	if matches == nil {
+		err = fmt.Errorf("unable to parse imageURI %s", imageURI)
+		return
+	}
 	checktypeName = matches[1]
 	checktypeVersion = matches[2]
 	return
