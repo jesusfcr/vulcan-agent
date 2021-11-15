@@ -103,12 +103,17 @@ func MainWithExitCode(cfg config.Config, bc BackendCreator, l log.Logger) int {
 	ctxqr, cancelqr := context.WithCancel(context.Background())
 
 	endpoint = cfg.Stream.Endpoint
-	stream := stream.New(l, metrics, re, endpoint)
-	streamDone, err := stream.ListenAndProcess(ctxqr)
-	if err != nil {
-		l.Errorf("error starting stream: %+v", err)
-		cancelqr()
-		return 1
+	var streamDone <-chan error
+	if endpoint == "" {
+		l.Infof("Disabling stream")
+	} else {
+		stream := stream.New(l, metrics, re, endpoint)
+		streamDone, err = stream.ListenAndProcess(ctxqr)
+		if err != nil {
+			l.Errorf("error starting stream: %+v", err)
+			cancelqr()
+			return 1
+		}
 	}
 
 	var maxTimeNoMsg *time.Duration
@@ -190,12 +195,14 @@ func MainWithExitCode(cfg config.Config, bc BackendCreator, l log.Logger) int {
 		l.Errorf("http server stopped with error: %+v", err)
 		return 1
 	}
-	// Wait for the stream to finish.
-	l.Debugf("waiting for the stream to stop")
-	err = <-streamDone
-	if err != nil && !errors.Is(err, context.Canceled) {
-		l.Errorf("stream stopped with error %+v", err)
-		return 1
+	if streamDone != nil {
+		// Wait for the stream to finish.
+		l.Debugf("waiting for the stream to stop")
+		err = <-streamDone
+		if err != nil && !errors.Is(err, context.Canceled) {
+			l.Errorf("stream stopped with error %+v", err)
+			return 1
+		}
 	}
 	l.Infof("agent finished gracefully")
 	return 0
