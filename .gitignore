@@ -1,5 +1,6 @@
 *.swp
 *.swo
+.vscode/
 local.toml
 local_autoscaling.toml
 vendor/

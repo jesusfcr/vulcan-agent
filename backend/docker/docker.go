@@ -11,6 +11,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/adevinta/dockerutils"
@@ -28,6 +31,11 @@ import (
 
 const abortTimeout = 5 * time.Second
 const defaultDockerIfaceName = "docker0"
+const defaultDockerHost = "host.docker.internal"
+const dockerExtraHost = "host.docker.internal:host-gateway"
+
+const directoryAssetType = "Directory"
+const targetMountPath = "/mount/local"
 
 // Client defines the shape of the docker client component needed by the docker
 // backend in order to be able to run checks.
@@ -49,32 +57,13 @@ type Retryer interface {
 
 // Docker implements a docker backend for runing jobs if the local docker.
 type Docker struct {
-	config    config.RegistryConfig
-	agentAddr string
-	checkVars backend.CheckVars
-	log       log.Logger
-	cli       Client //DockerClient
-	retryer   Retryer
-}
-
-func BuildBackend(l log.Logger, cfg config.Config, vars backend.CheckVars) (backend.Backend, error) {
-	var (
-		addr string
-		err  error
-	)
-	if cfg.API.Host != "" {
-		addr = cfg.API.Host + cfg.API.Port
-	} else {
-		addr, err = getAgentAddr(cfg.API.Port, cfg.API.IName)
-	}
-	if err != nil {
-		return nil, err
-	}
-	interval := cfg.Runtime.Docker.Registry.BackoffInterval
-	retries := cfg.Runtime.Docker.Registry.BackoffMaxRetries
-	re := retryer.NewRetryer(retries, interval, l)
-
-	return New(l, cfg.Runtime.Docker.Registry, re, addr, vars)
+	config          config.RegistryConfig
+	agentAddr       string
+	checkVars       backend.CheckVars
+	log             log.Logger
+	cli             Client //DockerClient
+	retryer         Retryer
+	dockerExtraHost string
 }
 
 // getAgentAddr returns the current address of the agent API from the Docker network.
@@ -115,7 +104,29 @@ func getAgentAddr(port, ifaceName string) (string, error) {
 
 // New created a new Docker backend using the given config, agent api addres and
 // CheckVars.
-func New(log log.Logger, cfg config.RegistryConfig, retryer Retryer, agentAddr string, vars backend.CheckVars) (*Docker, error) {
+func BuildBackend(log log.Logger, cfg config.Config, vars backend.CheckVars) (backend.Backend, error) {
+	var (
+		agentAddr string
+		err       error
+		extraHost string
+	)
+	if cfg.API.Host != "" {
+		agentAddr = cfg.API.Host + cfg.API.Port
+	} else {
+		agentAddr, err = getAgentAddr(cfg.API.Port, cfg.API.IName)
+		if err == nil {
+			extraHost = defaultDockerHost + ":" + strings.Split(agentAddr, ":")[0]
+		} else {
+			agentAddr = defaultDockerHost + cfg.API.Port
+			extraHost = dockerExtraHost
+		}
+	}
+
+	cfgReg := cfg.Runtime.Docker.Registry
+	interval := cfgReg.BackoffInterval
+	retries := cfgReg.BackoffMaxRetries
+	re := retryer.NewRetryer(retries, interval, log)
+
 	envCli, err := client.NewEnvClient()
 	if err != nil {
 		return &Docker{}, err
@@ -123,28 +134,30 @@ func New(log log.Logger, cfg config.RegistryConfig, retryer Retryer, agentAddr s
 
 	cli := dockerutils.NewClient(envCli)
 	b := &Docker{
-		config:    cfg,
-		agentAddr: agentAddr,
-		log:       log,
-		checkVars: vars,
-		cli:       cli,
-		retryer:   retryer,
+		config:          cfg.Runtime.Docker.Registry,
+		agentAddr:       agentAddr,
+		log:             log,
+		checkVars:       vars,
+		cli:             cli,
+		retryer:         re,
+		dockerExtraHost: extraHost,
 	}
-	if cfg.Server == "" {
+
+	if cfgReg.Server == "" {
 		return b, nil
 	}
 
-	pass := cfg.Pass
-	user := cfg.User
+	pass := cfgReg.Pass
+	user := cfgReg.User
 	if pass == "" {
-		creds, err := Credentials(cfg.Server)
+		creds, err := Credentials(cfgReg.Server)
 		if err != nil {
 			return nil, err
 		}
 		pass = creds.Secret
 		user = creds.Username
 	}
-	err = cli.Login(context.Background(), cfg.Server, user, pass)
+	err = cli.Login(context.Background(), cfgReg.Server, user, pass)
 	if err != nil {
 		return nil, err
 	}
@@ -246,12 +259,50 @@ func (b Docker) pull(ctx context.Context, image string) error {
 	return err
 }
 
+func getValidDirectory(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(wd, path)
+	}
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	if !fileInfo.IsDir() {
+		return "", fmt.Errorf("not a directory %s", path)
+	}
+	return path, nil
+}
+
 // getRunConfig will generate a docker.RunConfig for a given job.
 // It will inject the check options and target as environment variables.
 // It will return the generated docker.RunConfig.
 func (b *Docker) getRunConfig(params backend.RunParams) dockerutils.RunConfig {
+	// If the AssetType is Directory and the target is a valid directory
+	// We mount the target directory on /mount/local and replace the target with it.
+	target := params.Target
+	binds := []string{}
+	if params.AssetType == directoryAssetType {
+		if absPath, err := getValidDirectory(params.Target); err == nil {
+			bind := fmt.Sprintf("%s:%s:ro", absPath, targetMountPath)
+			b.log.Debugf("adding bind %s", bind)
+			binds = append(binds, bind)
+			target = targetMountPath
+		} else {
+			b.log.Errorf("skipping mounting invalid directory %s %+v", params.Target, err)
+		}
+	}
 	b.log.Debugf("fetching check required variables %+v", params.RequiredVars)
 	vars := dockerVars(params.RequiredVars, b.checkVars)
+	hostConfig := container.HostConfig{
+		Binds: binds,
+	}
+	if b.dockerExtraHost != "" {
+		hostConfig.ExtraHosts = []string{dockerExtraHost}
+	}
 	return dockerutils.RunConfig{
 		ContainerConfig: &container.Config{
 			Hostname: params.CheckID,
@@ -261,7 +312,7 @@ func (b *Docker) getRunConfig(params backend.RunParams) dockerutils.RunConfig {
 				fmt.Sprintf("%s=%s", backend.CheckIDVar, params.CheckID),
 				fmt.Sprintf("%s=%s", backend.ChecktypeNameVar, params.CheckTypeName),
 				fmt.Sprintf("%s=%s", backend.ChecktypeVersionVar, params.ChecktypeVersion),
-				fmt.Sprintf("%s=%s", backend.CheckTargetVar, params.Target),
+				fmt.Sprintf("%s=%s", backend.CheckTargetVar, target),
 				fmt.Sprintf("%s=%s", backend.CheckAssetTypeVar, params.AssetType),
 				fmt.Sprintf("%s=%s", backend.CheckOptionsVar, params.Options),
 				fmt.Sprintf("%s=%s", backend.AgentAddressVar, b.agentAddr),
@@ -269,7 +320,7 @@ func (b *Docker) getRunConfig(params backend.RunParams) dockerutils.RunConfig {
 				vars...,
 			),
 		},
-		HostConfig:            &container.HostConfig{},
+		HostConfig:            &hostConfig,
 		NetConfig:             &network.NetworkingConfig{},
 		ContainerStartOptions: types.ContainerStartOptions{},
 	}
