@@ -31,9 +31,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Build the docker backend.
+	b, err := docker.BuildBackend(l, cfg, nil)
+	if err != nil {
+		l.Errorf("error creating the backend to run the checks %v", err)
+		os.Exit(1)
+	}
+
 	// NOTE: This is done in order to be able to return custom exit codes
 	// while still executing deferred functions as expected.
 	// Using os.Exit inside the main function is not an option:
 	// https://golang.org/pkg/os/#Exit
-	os.Exit(agent.MainWithExitCode(cfg, docker.BuildBackend, l))
+	os.Exit(agent.MainWithExitCode(cfg, b, l))
 }

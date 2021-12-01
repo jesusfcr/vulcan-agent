@@ -31,23 +31,11 @@ import (
 	"github.com/adevinta/vulcan-agent/stream"
 )
 
-// BackendCreator defines the shape of the function that will be called by the
-// function MainWithExitCode in order to create the backend that will run the
-// checks.
-type BackendCreator func(log.Logger, config.Config, backend.CheckVars) (backend.Backend, error)
-
 // MainWithExitCode executes the agent with the backend created by calling the
 // passed BackendCreator. When the function finishes it returns an exit code of
 // 0 if the agent terminated gracefully, either by receiving a TERM signal or
 // because it passed more time than configured without reading a message.
-func MainWithExitCode(cfg config.Config, bc BackendCreator, l log.Logger) int {
-	// Build the backend.
-	b, err := bc(l, cfg, cfg.Check.Vars)
-	if err != nil {
-		l.Errorf("error creating the backend to run the checks %v", err)
-		return 1
-	}
-
+func MainWithExitCode(cfg config.Config, b backend.Backend, l log.Logger) int {
 	// Build the results service.
 	timeout := time.Duration(cfg.Uploader.Timeout * int(time.Second))
 	interval := cfg.Uploader.RetryInterval
