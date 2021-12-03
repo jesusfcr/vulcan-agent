@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/adevinta/dockerutils"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
@@ -45,11 +44,10 @@ func TestIntegrationDockerRun(t *testing.T) {
 		{
 			name: "ExecutesADockerContainer",
 			setup: func() *Docker {
-				envCli, err := client.NewEnvClient()
+				cli, err := client.NewEnvClient()
 				if err != nil {
 					panic(err)
 				}
-				cli := dockerutils.NewClient(envCli)
 				b := &Docker{
 					agentAddr: "an addr",
 					log:       &log.NullLog{},
@@ -117,12 +115,11 @@ func TestIntegrationDockerRunKillContainer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
 	}
-	envCli, err := client.NewEnvClient()
+	cli, err := client.NewEnvClient()
 	if err != nil {
 		panic(err)
 	}
 
-	cli := dockerutils.NewClient(envCli)
 	b := &Docker{
 		agentAddr: "an addr",
 		log:       &log.NullLog{},
@@ -155,12 +152,10 @@ func TestIntegrationDockerRunKillContainer(t *testing.T) {
 		return
 	}
 	// Check the container is killed.
-	args := fmt.Sprintf("label=CheckID=%s", id.String())
-	filter, err := filters.ParseFlag(args, filters.NewArgs())
-	if err != nil {
-		t.Errorf("error listing running containers: %+v", err)
-		return
-	}
+	filter := filters.NewArgs(filters.KeyValuePair{
+		Key:   "label",
+		Value: fmt.Sprintf("CheckID=%s", id.String()),
+	})
 	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{Filters: filter})
 	if err != nil {
 		t.Errorf("error listing running containers: %+v", err)
@@ -175,12 +170,11 @@ func TestIntegrationDockerDetectUnexpectedExit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
 	}
-	envCli, err := client.NewEnvClient()
+	cli, err := client.NewEnvClient()
 	if err != nil {
 		panic(err)
 	}
 
-	cli := dockerutils.NewClient(envCli)
 	b := &Docker{
 		agentAddr: "an addr",
 		log:       &log.NullLog{},
@@ -203,7 +197,7 @@ func TestIntegrationDockerDetectUnexpectedExit(t *testing.T) {
 		return
 	}
 	// Find the container and kill it.
-	contID, err := waitForContainer(cli, id.String())
+	contID, err := waitForContainer(b.cli, id.String())
 	if err != nil {
 		t.Error(err)
 		return
@@ -225,11 +219,10 @@ func TestIntegrationDockerRunAbortGracefully(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
 	}
-	envCli, err := client.NewEnvClient()
+	cli, err := client.NewEnvClient()
 	if err != nil {
 		panic(err)
 	}
-	cli := dockerutils.NewClient(envCli)
 	b := &Docker{
 		agentAddr: "an addr",
 		log:       &log.NullLog{},
@@ -265,12 +258,10 @@ func TestIntegrationDockerRunAbortGracefully(t *testing.T) {
 	}
 
 	// Check the container is killed.
-	args := fmt.Sprintf("label=CheckID=%s", id.String())
-	filter, err := filters.ParseFlag(args, filters.NewArgs())
-	if err != nil {
-		t.Errorf("error listing running containers: %+v", err)
-		return
-	}
+	filter := filters.NewArgs(filters.KeyValuePair{
+		Key:   "label",
+		Value: fmt.Sprintf("CheckID=%s", id.String()),
+	})
 	containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{Filters: filter})
 	if err != nil {
 		t.Errorf("error listing running containers: %+v", err)
@@ -306,14 +297,12 @@ func removeContainer(name string) (err error) {
 	return cmd.Run()
 }
 
-func waitForContainer(cli *dockerutils.Client, id string) (string, error) {
-	args := fmt.Sprintf("label=CheckID=%s", id)
-	filter, err := filters.ParseFlag(args, filters.NewArgs())
-	if err != nil {
-		err = fmt.Errorf("error listing running containers: %+v", err)
-		return "", err
-	}
-	var exit bool
+func waitForContainer(cli *client.Client, id string) (string, error) {
+	filter := filters.NewArgs(filters.KeyValuePair{
+		Key:   "label",
+		Value: fmt.Sprintf("CheckID=%s", id),
+	})
+	exit := false
 	for !exit {
 		containers, err := cli.ContainerList(context.Background(), types.ContainerListOptions{Filters: filter})
 		if err != nil {

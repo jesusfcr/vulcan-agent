@@ -7,13 +7,15 @@ package docker
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"time"
 
-	"github.com/adevinta/dockerutils"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -32,13 +34,20 @@ const defaultDockerIfaceName = "docker0"
 // Client defines the shape of the docker client component needed by the docker
 // backend in order to be able to run checks.
 type Client interface {
-	Create(ctx context.Context, cfg dockerutils.RunConfig, name string) (contID string, err error)
+	Create(ctx context.Context, cfg RunConfig, name string) (contID string, err error)
 	ContainerStop(ctx context.Context, containerID string, timeout *time.Duration) error
 	ContainerRemove(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error
 	ContainerStart(ctx context.Context, containerID string, options types.ContainerStartOptions) error
 	ContainerWait(ctx context.Context, containerID string) (int64, error)
 	ContainerLogs(ctx context.Context, container string, options types.ContainerLogsOptions) (io.ReadCloser, error)
 	Pull(ctx context.Context, imageRef string) error
+}
+
+type RunConfig struct {
+	ContainerConfig       *container.Config
+	HostConfig            *container.HostConfig
+	NetConfig             *network.NetworkingConfig
+	ContainerStartOptions types.ContainerStartOptions
 }
 
 // Retryer represents the functions used by the docker backend for retrying
@@ -48,7 +57,7 @@ type Retryer interface {
 }
 
 // Hook allows to update the docker configuration just before the container creation
-type Hook func(backend.RunParams, *dockerutils.RunConfig) error
+type Hook func(backend.RunParams, *RunConfig) error
 
 // Docker implements a docker backend for runing jobs if the local docker.
 type Docker struct {
@@ -56,7 +65,8 @@ type Docker struct {
 	agentAddr string
 	checkVars backend.CheckVars
 	log       log.Logger
-	cli       Client //DockerClient
+	cli       *client.Client
+	auth      types.AuthConfig
 	retryer   Retryer
 	hook      Hook
 }
@@ -123,13 +133,12 @@ func BuildBackend(log log.Logger, cfg config.Config, hook Hook) (backend.Backend
 		return &Docker{}, err
 	}
 
-	cli := dockerutils.NewClient(envCli)
 	b := &Docker{
 		config:    cfg.Runtime.Docker.Registry,
 		agentAddr: agentAddr,
 		log:       log,
 		checkVars: cfg.Check.Vars,
-		cli:       cli,
+		cli:       envCli,
 		retryer:   re,
 		hook:      hook,
 	}
@@ -148,10 +157,16 @@ func BuildBackend(log log.Logger, cfg config.Config, hook Hook) (backend.Backend
 		pass = creds.Secret
 		user = creds.Username
 	}
-	err = cli.Login(context.Background(), cfgReg.Server, user, pass)
+	auth := types.AuthConfig{
+		Username:      user,
+		Password:      pass,
+		ServerAddress: cfgReg.Server,
+	}
+	_, err = b.cli.RegistryLogin(context.Background(), auth)
 	if err != nil {
 		return nil, err
 	}
+	b.auth = auth
 	return b, nil
 }
 
@@ -180,7 +195,9 @@ func (b *Docker) run(ctx context.Context, params backend.RunParams, res chan<- b
 			return
 		}
 	}
-	contID, err := b.cli.Create(ctx, cfg, "")
+	// TODO: Use a propper Arch
+	cc, err := b.cli.ContainerCreate(ctx, cfg.ContainerConfig, cfg.HostConfig, cfg.NetConfig, nil, "")
+	contID := cc.ID
 	if err != nil {
 		res <- backend.RunResult{Error: err}
 		return
@@ -201,9 +218,17 @@ func (b *Docker) run(ctx context.Context, params backend.RunParams, res chan<- b
 		return
 	}
 
+	resultC, errC := b.cli.ContainerWait(context.Background(), cc.ID, "")
 	var exit int64
-	exit, err = b.cli.ContainerWait(ctx, contID)
-	b.log.Debugf("container with ID %s finished with exit code %d", contID, exit)
+	select {
+	case err = <-errC:
+	case result := <-resultC:
+		if result.Error != nil {
+			// TODO: Review how to manage this, ... generate an error?
+			b.log.Errorf("check: %s wait error message %s", result.Error.Message)
+		}
+		exit = result.StatusCode
+	}
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		err := fmt.Errorf("error running container for check %s: %w", params.CheckID, err)
 		res <- backend.RunResult{Error: err}
@@ -253,7 +278,23 @@ func (b Docker) getContainerlogs(ID string) ([]byte, error) {
 
 func (b Docker) pull(ctx context.Context, image string) error {
 	err := b.retryer.WithRetries("PullDockerImage", func() error {
-		return b.cli.Pull(ctx, image)
+		buf, err := json.Marshal(b.auth)
+		if err != nil {
+			return err
+		}
+		encodedAuth := base64.URLEncoding.EncodeToString(buf)
+		pullOpts := types.ImagePullOptions{
+			RegistryAuth: encodedAuth,
+		}
+		respBody, err := b.cli.ImagePull(ctx, image, pullOpts)
+		if err != nil {
+			return err
+		}
+		defer respBody.Close()
+		if _, err := io.Copy(ioutil.Discard, respBody); err != nil {
+			return err
+		}
+		return nil
 	})
 	return err
 }
@@ -261,10 +302,10 @@ func (b Docker) pull(ctx context.Context, image string) error {
 // getRunConfig will generate a docker.RunConfig for a given job.
 // It will inject the check options and target as environment variables.
 // It will return the generated docker.RunConfig.
-func (b *Docker) getRunConfig(params backend.RunParams) dockerutils.RunConfig {
+func (b *Docker) getRunConfig(params backend.RunParams) RunConfig {
 	b.log.Debugf("fetching check required variables %+v", params.RequiredVars)
 	vars := dockerVars(params.RequiredVars, b.checkVars)
-	return dockerutils.RunConfig{
+	return RunConfig{
 		ContainerConfig: &container.Config{
 			Hostname: params.CheckID,
 			Image:    params.Image,
