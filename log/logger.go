@@ -41,7 +41,7 @@ type Log struct {
 // New returns the default log using the passed in configuration.
 func New(cfg config.AgentConfig) (Logger, error) {
 	logger := logrus.New()
-	logger.Level = parseLogLevel(cfg.LogLevel)
+	logger.Level = ParseLogLevel(cfg.LogLevel)
 	hostname, err := os.Hostname()
 	if err != nil {
 		logger.Errorf("error retrieving hostname: %v", err)
@@ -68,7 +68,7 @@ func New(cfg config.AgentConfig) (Logger, error) {
 	return &Log{l}, nil
 }
 
-func parseLogLevel(logLevel string) logrus.Level {
+func ParseLogLevel(logLevel string) logrus.Level {
 	switch logLevel {
 	case "panic":
 		return logrus.PanicLevel
