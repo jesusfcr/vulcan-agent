@@ -31,11 +31,11 @@ import (
 	"github.com/adevinta/vulcan-agent/stream"
 )
 
-// MainWithExitCode executes the agent with the backend created by calling the
+// Run executes the agent with the backend created by calling the
 // passed BackendCreator. When the function finishes it returns an exit code of
 // 0 if the agent terminated gracefully, either by receiving a TERM signal or
 // because it passed more time than configured without reading a message.
-func MainWithExitCode(cfg config.Config, b backend.Backend, l log.Logger) int {
+func Run(cfg config.Config, b backend.Backend, l log.Logger) int {
 	// Build the results service.
 	timeout := time.Duration(cfg.Uploader.Timeout * int(time.Second))
 	interval := cfg.Uploader.RetryInterval

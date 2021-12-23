@@ -42,5 +42,5 @@ func main() {
 	// while still executing deferred functions as expected.
 	// Using os.Exit inside the main function is not an option:
 	// https://golang.org/pkg/os/#Exit
-	os.Exit(agent.MainWithExitCode(cfg, b, l))
+	os.Exit(agent.Run(cfg, b, l))
 }
