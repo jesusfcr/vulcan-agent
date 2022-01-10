@@ -1,6 +1,6 @@
-[![Build Status](https://travis-ci.org/adevinta/vulcan-agent.svg?branch=master)](https://travis-ci.org/adevinta/vulcan-agent)
-
 # Vulcan Agent
+
+[![Build Status](https://travis-ci.org/adevinta/vulcan-agent.svg?branch=master)](https://travis-ci.org/adevinta/vulcan-agent)
 
 Vulcan Agent is the Vulcan component that runs checks. Check jobs are received
 from SQS and executed using al-least-once semantics. The Agent executes the
@@ -18,13 +18,12 @@ service](https://github.com/adevinta/vulcan-stream) in order to abort the
 current running checks and to query the checks the must be cancelled before they
 start running.
 
-
-### Integrations
+## Integrations
 
 Agent Runtimes
 
 - [x] Docker
-- [] Kubernetes
+- [ ] Kubernetes
 
 Queues
 
