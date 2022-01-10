@@ -44,7 +44,7 @@ func TestIntegrationDockerRun(t *testing.T) {
 		{
 			name: "ExecutesADockerContainer",
 			setup: func() *Docker {
-				cli, err := client.NewEnvClient()
+				cli, err := client.NewClientWithOpts(client.FromEnv)
 				if err != nil {
 					panic(err)
 				}
@@ -115,7 +115,7 @@ func TestIntegrationDockerRunKillContainer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
 	}
-	cli, err := client.NewEnvClient()
+	cli, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		panic(err)
 	}
@@ -170,7 +170,7 @@ func TestIntegrationDockerDetectUnexpectedExit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
 	}
-	cli, err := client.NewEnvClient()
+	cli, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		panic(err)
 	}
@@ -219,7 +219,7 @@ func TestIntegrationDockerRunAbortGracefully(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
 	}
-	cli, err := client.NewEnvClient()
+	cli, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		panic(err)
 	}

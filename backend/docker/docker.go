@@ -129,7 +129,7 @@ func NewBackend(log log.Logger, cfg config.Config, hook Hook) (backend.Backend, 
 	retries := cfgReg.BackoffMaxRetries
 	re := retryer.NewRetryer(retries, interval, log)
 
-	envCli, err := client.NewEnvClient()
+	envCli, err := client.NewClientWithOpts(client.FromEnv)
 	if err != nil {
 		return &Docker{}, err
 	}
