@@ -51,7 +51,7 @@ type RunConfig struct {
 	ContainerStartOptions types.ContainerStartOptions
 }
 
-// Hook allows to update the docker configuration just before the container creation
+// Hook allows to update the docker configuration just before the container creation.
 type Hook func(backend.RunParams, *RunConfig) error
 
 // Retryer represents the functions used by the docker backend for retrying
