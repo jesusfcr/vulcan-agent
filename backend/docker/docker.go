@@ -196,7 +196,6 @@ func (b *Docker) run(ctx context.Context, params backend.RunParams, res chan<- b
 			return
 		}
 	}
-	// TODO: Use a propper Arch
 	cc, err := b.cli.ContainerCreate(ctx, cfg.ContainerConfig, cfg.HostConfig, cfg.NetConfig, nil, "")
 	contID := cc.ID
 	if err != nil {
