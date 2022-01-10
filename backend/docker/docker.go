@@ -39,8 +39,8 @@ type RunConfig struct {
 	ContainerStartOptions types.ContainerStartOptions
 }
 
-// Hook allows to update the docker configuration just before the container creation.
-type Hook func(backend.RunParams, *RunConfig) error
+// ConfigUpdater allows to update the docker configuration just before the container creation.
+type ConfigUpdater func(backend.RunParams, *RunConfig) error
 
 // Retryer represents the functions used by the docker backend for retrying
 // docker registry operations.
@@ -57,7 +57,7 @@ type Docker struct {
 	cli       *client.Client
 	auth      types.AuthConfig
 	retryer   Retryer
-	hook      Hook
+	updater   ConfigUpdater
 }
 
 // getAgentAddr returns the current address of the agent API from the Docker network.
@@ -96,9 +96,10 @@ func getAgentAddr(port, ifaceName string) (string, error) {
 	return "", errors.New("failed to determine Docker agent IP address")
 }
 
-// New created a new Docker backend using the given config, agent api addres and
-// CheckVars.
-func NewBackend(log log.Logger, cfg config.Config, hook Hook) (backend.Backend, error) {
+// NewBackend creates a new Docker backend using the given config, agent api addres and CheckVars.
+// A ConfigUpdater function can be passed to inspect/update the final docker RunConfig
+// before creating the container for each check.
+func NewBackend(log log.Logger, cfg config.Config, updater ConfigUpdater) (backend.Backend, error) {
 	var (
 		agentAddr string
 		err       error
@@ -129,7 +130,7 @@ func NewBackend(log log.Logger, cfg config.Config, hook Hook) (backend.Backend, 
 		checkVars: cfg.Check.Vars,
 		cli:       envCli,
 		retryer:   re,
-		hook:      hook,
+		updater:   updater,
 	}
 
 	if cfgReg.Server == "" {
@@ -177,8 +178,8 @@ func (b *Docker) Run(ctx context.Context, params backend.RunParams) (<-chan back
 func (b *Docker) run(ctx context.Context, params backend.RunParams, res chan<- backend.RunResult) {
 	cfg := b.getRunConfig(params)
 
-	if b.hook != nil {
-		err := b.hook(params, &cfg)
+	if b.updater != nil {
+		err := b.updater(params, &cfg)
 		if err != nil {
 			res <- backend.RunResult{Error: err}
 			return
