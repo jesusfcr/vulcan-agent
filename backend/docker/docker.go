@@ -40,6 +40,13 @@ type RunConfig struct {
 }
 
 // ConfigUpdater allows to update the docker configuration just before the container creation.
+//  updater := func(params backend.RunParams, rc *RunConfig) error {
+// 	 // If the asset type is Hostname pass an extra env variable to the container.
+// 	 if params.AssetType == "Hostname" {
+// 	 	rc.ContainerConfig.Env = append(rc.ContainerConfig.Env, "FOO=BAR")
+// 	 }
+// 	 return nil
+//  }
 type ConfigUpdater func(backend.RunParams, *RunConfig) error
 
 // Retryer represents the functions used by the docker backend for retrying
