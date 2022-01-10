@@ -34,6 +34,9 @@ type Creds struct {
 func Credentials(registry string) (Creds, error) {
 	var c Creds
 	program, err := shellProgram()
+	if err != nil {
+		return c, err
+	}
 	name := "docker-credential-" + program
 	p := client.NewShellProgramFunc(name)
 	creds, err := client.Get(p, registry)
