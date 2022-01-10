@@ -31,18 +31,6 @@ import (
 const abortTimeout = 5 * time.Second
 const defaultDockerIfaceName = "docker0"
 
-// Client defines the shape of the docker client component needed by the docker
-// backend in order to be able to run checks.
-type Client interface {
-	Create(ctx context.Context, cfg RunConfig, name string) (contID string, err error)
-	ContainerStop(ctx context.Context, containerID string, timeout *time.Duration) error
-	ContainerRemove(ctx context.Context, containerID string, options types.ContainerRemoveOptions) error
-	ContainerStart(ctx context.Context, containerID string, options types.ContainerStartOptions) error
-	ContainerWait(ctx context.Context, containerID string) (int64, error)
-	ContainerLogs(ctx context.Context, container string, options types.ContainerLogsOptions) (io.ReadCloser, error)
-	Pull(ctx context.Context, imageRef string) error
-}
-
 // RunConfig contains the configuration for executing a check in a container.
 type RunConfig struct {
 	ContainerConfig       *container.Config
