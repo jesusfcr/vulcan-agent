@@ -37,7 +37,7 @@ type AgentConfig struct {
 
 // StreamConfig defines the configuration for the event stream.
 type StreamConfig struct {
-	Endpoint      string `toml:"endpoint"`
+	Endpoint      string `toml:"endpoint"` // Can be empty if no cancelation mechanism is required
 	QueryEndpoint string `toml:"query_endpoint"`
 	Timeout       int    `toml:"timeout"`
 	Retries       int    `toml:"retries"`

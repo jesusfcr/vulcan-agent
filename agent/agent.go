@@ -31,8 +31,8 @@ import (
 	"github.com/adevinta/vulcan-agent/stream"
 )
 
-// Run executes the agent with the backend created by calling the
-// passed BackendCreator. When the function finishes it returns an exit code of
+// Run executes the agent using the given config and backend.
+// When the function finishes it returns an exit code of
 // 0 if the agent terminated gracefully, either by receiving a TERM signal or
 // because it passed more time than configured without reading a message.
 func Run(cfg config.Config, b backend.Backend, l log.Logger) int {
@@ -90,12 +90,11 @@ func Run(cfg config.Config, b backend.Backend, l log.Logger) int {
 
 	ctxqr, cancelqr := context.WithCancel(context.Background())
 
-	endpoint = cfg.Stream.Endpoint
 	var streamDone <-chan error
-	if endpoint == "" {
-		l.Infof("Disabling stream")
+	if cfg.Stream.Endpoint == "" {
+		l.Infof("Check cancel stream disabled")
 	} else {
-		stream := stream.New(l, metrics, re, endpoint)
+		stream := stream.New(l, metrics, re, cfg.Stream.Endpoint)
 		streamDone, err = stream.ListenAndProcess(ctxqr)
 		if err != nil {
 			l.Errorf("error starting stream: %+v", err)
