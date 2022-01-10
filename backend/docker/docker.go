@@ -218,16 +218,16 @@ func (b *Docker) run(ctx context.Context, params backend.RunParams, res chan<- b
 		return
 	}
 
-	resultC, errC := b.cli.ContainerWait(context.Background(), cc.ID, "")
+	resultC, errC := b.cli.ContainerWait(ctx, contID, "")
 	var exit int64
 	select {
 	case err = <-errC:
 	case result := <-resultC:
-		if result.Error != nil {
-			// TODO: Review how to manage this, ... generate an error?
-			b.log.Errorf("check: %s wait error message %s", result.Error.Message)
+		if result.Error == nil {
+			exit = result.StatusCode
+		} else {
+			err = fmt.Errorf("wait error %s", result.Error.Message)
 		}
-		exit = result.StatusCode
 	}
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		err := fmt.Errorf("error running container for check %s: %w", params.CheckID, err)
