@@ -110,7 +110,7 @@ func getAgentAddr(port, ifaceName string) (string, error) {
 
 // New created a new Docker backend using the given config, agent api addres and
 // CheckVars.
-func BuildBackend(log log.Logger, cfg config.Config, hook Hook) (backend.Backend, error) {
+func NewBackend(log log.Logger, cfg config.Config, hook Hook) (backend.Backend, error) {
 	var (
 		agentAddr string
 		err       error

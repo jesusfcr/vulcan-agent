@@ -32,7 +32,7 @@ func main() {
 	}
 
 	// Build the docker backend.
-	b, err := docker.BuildBackend(l, cfg, nil)
+	b, err := docker.NewBackend(l, cfg, nil)
 	if err != nil {
 		l.Errorf("error creating the backend to run the checks %v", err)
 		os.Exit(1)
