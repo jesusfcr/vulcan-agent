@@ -43,6 +43,7 @@ type Client interface {
 	Pull(ctx context.Context, imageRef string) error
 }
 
+// RunConfig contains the configuration for executing a check in a container.
 type RunConfig struct {
 	ContainerConfig       *container.Config
 	HostConfig            *container.HostConfig
@@ -50,14 +51,14 @@ type RunConfig struct {
 	ContainerStartOptions types.ContainerStartOptions
 }
 
+// Hook allows to update the docker configuration just before the container creation
+type Hook func(backend.RunParams, *RunConfig) error
+
 // Retryer represents the functions used by the docker backend for retrying
 // docker registry operations.
 type Retryer interface {
 	WithRetries(op string, exec func() error) error
 }
-
-// Hook allows to update the docker configuration just before the container creation
-type Hook func(backend.RunParams, *RunConfig) error
 
 // Docker implements a docker backend for runing jobs if the local docker.
 type Docker struct {
