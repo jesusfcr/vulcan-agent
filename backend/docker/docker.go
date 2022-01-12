@@ -115,7 +115,7 @@ func NewBackend(log log.Logger, cfg config.Config, updater ConfigUpdater) (backe
 		agentAddr = cfg.API.Host + cfg.API.Port
 	} else {
 		agentAddr, err = getAgentAddr(cfg.API.Port, cfg.API.IName)
-		if err == nil {
+		if err != nil {
 			return &Docker{}, err
 		}
 	}
